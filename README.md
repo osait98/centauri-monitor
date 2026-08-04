@@ -1,6 +1,6 @@
-# Elegoo CC1/CC2 Monitor
+# Elegoo CC1 Monitor
 
-A 3D print monitor for Elegoo Centauri Carbon printers (CC1/CC2), running on an ESP32-C3 SuperMini with an OLED display and a web-based configuration panel.
+A 3D print monitor for Elegoo Centauri Carbon printer(CC1), running on an ESP32-C3 with an OLED display and a web-based configuration panel.
 
 ## Features
 
@@ -17,7 +17,7 @@ A 3D print monitor for Elegoo Centauri Carbon printers (CC1/CC2), running on an 
 
 ## Hardware
 
-- ESP32-C3 SuperMini
+- ESP32-C3
 - SSD1306 OLED display, 128×64, I2C, address `0x3C`
   - SDA → GPIO10
   - SCL → GPIO9

@@ -29,8 +29,6 @@ body{font-family:Arial,sans-serif;background:#111;color:#e0e0e0;
 .brand-logo{font-size:1rem;font-weight:700;color:#fff;letter-spacing:.05em}
 .brand-logo span{color:#4caf50}
 .brand-sub{font-size:.75rem;color:#666;margin-top:1px}
-.dot{width:7px;height:7px;border-radius:50%;background:#444;margin-left:auto}
-.dot.on{background:#4caf50}.dot.off{background:#f44336}
 .tabs{display:flex;background:#181818;border-bottom:1px solid #2a2a2a}
 .tab{flex:1;padding:10px 4px;text-align:center;cursor:pointer;font-size:.75rem;
      color:#555;border-bottom:2px solid transparent;margin-bottom:-1px;transition:.15s}
@@ -103,9 +101,8 @@ hr{border:none;border-top:1px solid #2a2a2a;margin:12px 0}
   <div class=brand>
     <div>
       <div class=brand-logo>ELEG<span>OO</span> Monitor</div>
-      <div class=brand-sub id=hdr>CC1 / CC2 — ESP32-C3</div>
+      <div class=brand-sub id=hdr>CC1 — ESP32-C3</div>
     </div>
-    <div class=dot id=dot></div>
   </div>
 
   <div class=tabs id=tabbar>
@@ -305,8 +302,6 @@ function startPolling(){if(pollTimer)return;fetchPrinter();pollTimer=setInterval
 async function fetchPrinter(){
   try{
     var d=await fetch('/api/printer').then(r=>r.json());
-    var dotEl=document.getElementById('dot');
-    if(dotEl) dotEl.className='dot '+(d.connected?'on':'off');
     document.getElementById('pc').innerHTML=(d.printing?d.progress.toFixed(0):'–')+'<small>%</small>';
     document.getElementById('pf').style.width=(d.printing?d.progress:0)+'%';
     document.getElementById('fn').textContent=d.filename||'No active print';
@@ -325,9 +320,7 @@ async function fetchPrinter(){
     st('C',d.tempChamber,0);
     document.getElementById('sb-l').textContent='ESP: '+(window._espIP||'—');
     document.getElementById('sb-r').textContent='PRT: '+(window._prtIP||'—');
-  }catch(e){
-    document.getElementById('dot').className='dot off';
-  }
+  }catch(e){}
 }
 
 async function init(){
@@ -337,7 +330,7 @@ async function init(){
     document.getElementById('fr').value=d.refreshSec||5;
     document.getElementById('frot').value=d.oledRot||0;
     if(d.wifiStatus==='connected'){
-      document.getElementById('hdr').textContent='CC1 / CC2 — ESP32-C3';
+      document.getElementById('hdr').textContent='CC1 — ESP32-C3';
       window._espIP=d.espIP;
       window._prtIP=d.printerIP;
       document.getElementById('sb-l').textContent='ESP: '+d.espIP;
@@ -435,6 +428,8 @@ void drawCompleteScreen();
 void drawIdleScreen();
 void drawConnectingScreen();
 void drawAPScreen();
+void renderCurrentScreen();
+void tickOledAnimation();
 String formatTime(int s);
 String formatTimeCompact(int s);
 void serialPrintStatus();
@@ -447,12 +442,11 @@ void setup() {
   Serial.setTxTimeoutMs(0);  // don't block when there's no USB Serial connection
   delay(200);
 
-  // Disable BT and limit WiFi power — ESP32-C3 SuperMini antenna
+  // Disable BT — not used, frees RF/RAM resources
   btStop();
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
   Serial.println("\n\n========================================");
-  Serial.println("   Elegoo CC1/CC2 Monitor — starting");
+  Serial.println("   Elegoo CC1 Monitor — starting");
   Serial.println("========================================");
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -496,22 +490,35 @@ void loop() {
     serialPrintStatus();
   }
 
+  tickOledAnimation();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OLED ANIMATION TICK — also called from fetchPrinterStatus() while it
+// blocks waiting on the WebSocket, so the display never freezes mid-poll.
+// ════════════════════════════════════════════════════════════════════════════
+void renderCurrentScreen() {
+  display.clearDisplay();
+  switch (appMode) {
+    case MODE_AP_CONFIG:  drawAPScreen();         break;
+    case MODE_CONNECTING: drawConnectingScreen();  break;
+    case MODE_RUNNING:
+      if (printer.stateText == "Paused" || printer.stateText == "Pausing...")
+                                         drawPausedScreen();
+      else if (printer.stateText == "Complete") drawCompleteScreen();
+      else if (printer.printing)         drawPrintingScreen();
+      else                               drawIdleScreen();
+      break;
+  }
+  display.display();
+}
+
+void tickOledAnimation() {
+  unsigned long now = millis();
   if (now - lastAnim >= 80) {
     lastAnim = now;
     animFrame = (animFrame + 1) % 60;
-    display.clearDisplay();
-    switch (appMode) {
-      case MODE_AP_CONFIG:  drawAPScreen();         break;
-      case MODE_CONNECTING: drawConnectingScreen();  break;
-      case MODE_RUNNING:
-        if (printer.stateText == "Paused" || printer.stateText == "Pausing...")
-                                           drawPausedScreen();
-        else if (printer.stateText == "Complete") drawCompleteScreen();
-        else if (printer.printing)         drawPrintingScreen();
-        else                               drawIdleScreen();
-        break;
-    }
-    display.display();
+    renderCurrentScreen();
   }
 }
 
@@ -549,6 +556,10 @@ void startAPMode() {
   WiFi.disconnect();
   delay(100);
   WiFi.mode(WIFI_AP_STA);
+  // Must be set AFTER WiFi.mode() — the radio isn't started before that, so
+  // setTxPower() silently no-ops if called earlier (as it used to be in setup()).
+  // Limits TX power — ESP32-C3 SuperMini antenna/power circuit can't handle full power.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.softAP("ElegooMonitor", "elegoo123");
   delay(500);
   Serial.printf("[AP] SSID: ElegooMonitor  Pass: elegoo123  IP: %s\n", WiFi.softAPIP().toString().c_str());
@@ -556,6 +567,8 @@ void startAPMode() {
 
 void startSTAMode() {
   WiFi.mode(WIFI_STA);
+  // See comment in startAPMode() — must come after WiFi.mode() to actually apply.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.begin(cfg.ssid, cfg.password);
   Serial.printf("[WiFi] Connecting to \"%s\"...\n", cfg.ssid);
 
@@ -830,9 +843,16 @@ bool fetchPrinterStatus() {
     "Sec-WebSocket-Version: 13\r\n\r\n"
   );
 
+  // Wait for the HTTP upgrade response ourselves instead of client.readString() —
+  // readString() blocks internally for the full setTimeout() window with no way
+  // to refresh the OLED in between, which was the real cause of the freezes.
+  String resp;
   unsigned long t = millis();
-  while (client.connected() && !client.available() && millis() - t < 2000) delay(10);
-  String resp = client.readString();
+  while (client.connected() && resp.indexOf("\r\n\r\n") < 0 && millis() - t < 2000) {
+    tickOledAnimation();
+    while (client.available()) resp += (char)client.read();
+    if (resp.indexOf("\r\n\r\n") < 0) delay(5);
+  }
   if (resp.indexOf("101") < 0) {
     Serial.println("[SDCP] No HTTP 101 upgrade");
     client.stop();
@@ -852,17 +872,7 @@ bool fetchPrinterStatus() {
     unsigned long ft = millis();
     while (client.connected() && client.available() < 2 && millis() - ft < (unsigned long)timeoutMs) {
       // Keep refreshing the OLED while waiting — animation doesn't freeze
-      unsigned long now = millis();
-      if (now - lastAnim >= 80) {
-        lastAnim = now;
-        animFrame = (animFrame + 1) % 60;
-        display.clearDisplay();
-        if (printer.stateText == "Paused" || printer.stateText == "Pausing...") drawPausedScreen();
-        else if (printer.stateText == "Complete") drawCompleteScreen();
-        else if (printer.printing) drawPrintingScreen();
-        else drawIdleScreen();
-        display.display();
-      }
+      tickOledAnimation();
       delay(10);
     }
     if (!client.available()) return out;
@@ -875,6 +885,8 @@ bool fetchPrinterStatus() {
     if (len > 0) out.reserve(len);
     unsigned long rt = millis();
     while ((int)out.length() < len && millis() - rt < 2000) {
+      // Same OLED refresh here — payload can arrive in several TCP chunks
+      tickOledAnimation();
       if (client.available()) out += (char)client.read();
       else delay(1);
     }
@@ -884,6 +896,7 @@ bool fetchPrinterStatus() {
   // Frame 1: expect ACK
   String frame1 = readFrame(2000);
   if (frame1.indexOf("\"Ack\"") < 0) {
+    Serial.printf("[SDCP] No Ack frame (got %d bytes)\n", frame1.length());
     client.stop();
     return false;
   }
@@ -894,9 +907,11 @@ bool fetchPrinterStatus() {
 
   if (frame2.length() > 0) {
     parseSdcpStatus(frame2);
-    // Check for an extra frame (e.g. unfinished print notification) —
-    // must be read BEFORE client.stop(), otherwise the socket is already closed
-    String frame3 = readFrame(500);
+    // Check for an extra frame (e.g. unfinished print notification) that may
+    // already be sitting in the buffer — must be checked BEFORE client.stop(),
+    // otherwise the socket is already closed. Use a 0ms timeout: only grab
+    // what's already arrived, don't stall the loop waiting for one that won't come.
+    String frame3 = readFrame(0);
     if (frame3.length() > 0) {
       Serial.printf("[SDCP] frame3: %d bytes\n", frame3.length());
       for (int i = 0; i < (int)frame3.length(); i += 256)
