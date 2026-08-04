@@ -1,0 +1,7 @@
+{
+  "editor.formatOnSave": false,
+  "C_Cpp.intelliSenseEngine": "default",
+  "files.associations": {
+    "*.ino": "cpp"
+  }
+}
