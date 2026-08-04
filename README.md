@@ -1,4 +1,4 @@
-# Elegoo CC1/CC2 Monitor
+# Elegoo CC1 Monitor
 
 A 3D print monitor for Elegoo Centauri Carbon printer(CC1), running on an ESP32-C3 with an OLED display and a web-based configuration panel.
 
